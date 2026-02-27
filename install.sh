@@ -1,108 +1,50 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-SUPPORTED_UBUNTU=("22.04" "24.04")
+echo "===================================="
+echo "          ENJANEB Installer"
+echo "===================================="
+echo ""
 
-# ---------- UI helpers ----------
-GREEN="\033[0;32m"
-RED="\033[0;31m"
-CYAN="\033[0;36m"
-NC="\033[0m"
+# ---- Check Ubuntu Version ----
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  VERSION=$VERSION_ID
+else
+  echo "Cannot detect OS."
+  exit 1
+fi
 
-banner() {
-  echo -e "${CYAN}"
-  echo "===================================="
-  echo "          ENJANEB Installer"
-  echo "===================================="
-  echo -e "${NC}"
-}
+if [[ "$VERSION" != "22.04" && "$VERSION" != "24.04" ]]; then
+  echo "Unsupported Ubuntu version: $VERSION"
+  exit 1
+fi
 
-die() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-ok()  { echo -e "${GREEN}✅${NC} $*"; }
-info(){ echo -e "${CYAN}ℹ${NC} $*"; }
+echo "Ubuntu $VERSION detected ✅"
+echo ""
 
-read_default() {
-  local prompt="$1" def="$2" ans=""
-  read -rp "$prompt [$def]: " ans || true
-  echo "${ans:-$def}"
-}
+# ---- Role Selection ----
+echo "Select server role:"
+echo "1) Iran (Proxy + Panel)"
+echo "2) Server Kharej (Gateway)"
+echo ""
 
-# ---------- checks ----------
-detect_ubuntu_version() {
-  if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    echo "${VERSION_ID:-unknown}"
-  else
-    echo "unknown"
-  fi
-}
+read -p "Enter choice [1]: " choice
 
-check_ubuntu_supported() {
-  local v="$1"
-  for okv in "${SUPPORTED_UBUNTU[@]}"; do
-    [[ "$v" == "$okv" ]] && return 0
-  done
-  return 1
-}
+if [ -z "$choice" ]; then
+  choice=1
+fi
 
-need_root() {
-  if [[ ${EUID:-0} -ne 0 ]]; then
-    die "Run as root. Example: sudo ./install.sh"
-  fi
-}
+if [ "$choice" = "1" ]; then
+  ROLE="iran"
+elif [ "$choice" = "2" ]; then
+  ROLE="kharej"
+else
+  echo "Invalid choice"
+  exit 1
+fi
 
-# ---------- role selection ----------
-choose_role() {
-  echo
-  echo "Select server role:"
-  echo "  1) Iran (Proxy + Panel)"
-  echo "  2) Server Kharej (Gateway)"
-  echo
-  local r
-  r="$(read_default "Enter choice" "1")"
-  case "$r" in
-    1) echo "iran" ;;
-    2) echo "kharej" ;;
-    *) die "Invalid choice: $r" ;;
-  esac
-}
-
-# ---------- phase stubs ----------
-phase_iran_stub() {
-  info "Selected: Iran (Proxy + Panel)"
-  info "Phase 2 stub: next steps will install packages, enable firewall, and deploy panel components."
-  ok "Nothing changed yet (safe test)."
-}
-
-phase_kharej_stub() {
-  info "Selected: Server Kharej (Gateway)"
-  info "Phase 2 stub: next steps will prepare gateway components."
-  ok "Nothing changed yet (safe test)."
-}
-
-main() {
-  banner
-  need_root
-
-  info "Checking Ubuntu version..."
-  local v
-  v="$(detect_ubuntu_version)"
-  if ! check_ubuntu_supported "$v"; then
-    die "Unsupported Ubuntu: $v (supported: 22.04, 24.04)"
-  fi
-  ok "Ubuntu $v detected"
-
-  local role
-  role="$(choose_role)"
-
-  case "$role" in
-    iran)   phase_iran_stub ;;
-    kharej) phase_kharej_stub ;;
-    *) die "Unexpected role: $role" ;;
-  esac
-
-  echo
-  ok "Phase 2 installer test completed."
-}
-
-main "$@"
+echo ""
+echo "You selected: $ROLE"
+echo ""
+echo "Phase 2 test successful ✅"
