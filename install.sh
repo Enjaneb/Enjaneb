@@ -2,15 +2,17 @@
 set -euo pipefail
 
 # =========================
-# ENJANEB - One-file Installer
+# ENJANEB - One-file Installer (NO SSL)
 # Ubuntu: 22.04 / 24.04
 # Installs:
-# - UFW (opens SSH current port, 80, 443)
+# - UFW (opens current SSH port, 80, and proxy ports)
 # - Fail2ban (enabled)
-# - Nginx + Let's Encrypt SSL
+# - Nginx (HTTP only, port 80) reverse proxy to ENJANEB backend
 # - ENJANEB Panel (FastAPI) as systemd: enjaneb.service
 # - Squid HTTP Proxy (Basic auth via htpasswd) + managed via panel
 # - Dante SOCKS5 (auth via system users) + managed via panel
+#
+# NOTE: This installer DOES NOT configure SSL/Certbot.
 # =========================
 
 SUPPORTED_UBUNTU=("22.04" "24.04")
@@ -24,7 +26,7 @@ SQUID_HTPASSWD="/etc/squid/enjaneb_htpasswd"
 SQUID_CONF="/etc/squid/squid.conf"
 
 DANTE_CONF="/etc/danted.conf"
-DANTE_USER_GROUP="enjaneb-socks"   # group for socks users
+DANTE_USER_GROUP="enjaneb-socks"
 
 banner() {
   echo "===================================="
@@ -89,12 +91,7 @@ install_packages() {
 
   echo "Installing packages..."
   export DEBIAN_FRONTEND=noninteractive
-  apt-get install -y \
-    ufw fail2ban curl ca-certificates \
-    nginx certbot python3-certbot-nginx \
-    python3 python3-venv python3-pip \
-    apache2-utils \
-    squid dante-server
+  apt-get install -y     ufw fail2ban curl ca-certificates     nginx     python3 python3-venv python3-pip     apache2-utils     squid dante-server
 }
 
 setup_firewall() {
@@ -102,7 +99,6 @@ setup_firewall() {
   echo "Configuring UFW firewall..."
   ufw allow "${ssh_port}/tcp" || true
   ufw allow 80/tcp || true
-  ufw allow 443/tcp || true
   ufw allow "${HTTP_PORT}/tcp" || true
   ufw allow "${SOCKS_PORT}/tcp" || true
   ufw --force enable
@@ -114,47 +110,32 @@ setup_fail2ban() {
   systemctl restart fail2ban
 }
 
-setup_nginx_site_http_only() {
-  local domain="$1"
-  mkdir -p /var/www/enjaneb
-  cat > /var/www/enjaneb/index.html <<EOF
-<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>ENJANEB</title></head>
-<body style="font-family: Arial, sans-serif">
-  <h2>ENJANEB Panel</h2>
-  <p>Nginx is running. The panel will be available after backend setup.</p>
-</body>
-</html>
-EOF
+setup_nginx_http_reverse_proxy() {
+  local host="$1"
+  local backend_port="$2"
 
-  cat > "/etc/nginx/sites-available/${domain}.conf" <<EOF
+  echo "Configuring Nginx (HTTP only) reverse proxy..."
+  cat > "/etc/nginx/sites-available/enjaneb.conf" <<EOF
 server {
   listen 80;
-  server_name ${domain};
-
-  root /var/www/enjaneb;
-  index index.html;
+  server_name ${host};
 
   location / {
-    try_files \$uri \$uri/ =404;
+    proxy_pass http://127.0.0.1:${backend_port};
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
   }
 }
 EOF
 
-  ln -sf "/etc/nginx/sites-available/${domain}.conf" "/etc/nginx/sites-enabled/${domain}.conf"
+  ln -sf "/etc/nginx/sites-available/enjaneb.conf" "/etc/nginx/sites-enabled/enjaneb.conf"
   rm -f /etc/nginx/sites-enabled/default || true
 
   nginx -t
   systemctl enable nginx
   systemctl restart nginx
-}
-
-obtain_ssl_with_certbot() {
-  local domain="$1"
-  local email="$2"
-  echo "Requesting SSL certificate (Let's Encrypt)..."
-  certbot --nginx -d "${domain}" --non-interactive --agree-tos -m "${email}" --redirect
 }
 
 create_enjaneb_user() {
@@ -168,39 +149,30 @@ create_enjaneb_user() {
 
 setup_squid() {
   echo "Configuring Squid HTTP proxy..."
-  # ensure htpasswd exists
   touch "${SQUID_HTPASSWD}"
   chmod 640 "${SQUID_HTPASSWD}"
   chown proxy:proxy "${SQUID_HTPASSWD}" 2>/dev/null || true
 
-  # Backup existing
   if [[ -f "${SQUID_CONF}" ]]; then
     cp -a "${SQUID_CONF}" "${SQUID_CONF}.bak.$(date +%s)" || true
   fi
 
   cat > "${SQUID_CONF}" <<EOF
-# ENJANEB Squid config
+# ENJANEB Squid config (HTTP proxy)
 http_port ${HTTP_PORT}
 
-# Basic auth
 auth_param basic program /usr/lib/squid/basic_ncsa_auth ${SQUID_HTPASSWD}
 auth_param basic realm ENJANEB-HTTP
 acl authenticated proxy_auth REQUIRED
 
-# Allow authenticated users
 http_access allow authenticated
-
-# Deny all other access
 http_access deny all
 
-# Basic hardening
 via off
 forwarded_for delete
-request_header_access Authorization allow all
 
 access_log /var/log/squid/access.log
 cache_log /var/log/squid/cache.log
-
 EOF
 
   systemctl enable squid
@@ -210,23 +182,20 @@ EOF
 setup_dante() {
   echo "Configuring Dante SOCKS5 proxy..."
 
-  # Ensure group for socks users exists
   if ! getent group "${DANTE_USER_GROUP}" >/dev/null; then
     groupadd "${DANTE_USER_GROUP}"
   fi
 
-  # Backup existing
   if [[ -f "${DANTE_CONF}" ]]; then
     cp -a "${DANTE_CONF}" "${DANTE_CONF}.bak.$(date +%s)" || true
   fi
 
-  # Find main interface ip (best-effort)
   local iface
   iface="$(ip route get 1.1.1.1 2>/dev/null | awk '/dev/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -n1 || true)"
   [[ -z "${iface:-}" ]] && iface="eth0"
 
   cat > "${DANTE_CONF}" <<EOF
-# ENJANEB Dante config
+# ENJANEB Dante config (SOCKS5)
 logoutput: syslog
 
 internal: ${iface} port = ${SOCKS_PORT}
@@ -280,15 +249,14 @@ python-dotenv==1.0.1
 passlib[bcrypt]==1.7.4
 EOF
 
-  # Minimal Web UI (server-side HTML) + API for managing users (HTTP & SOCKS)
   cat > "${ENJ_HOME}/backend/app.py" <<'EOF'
 import os
 import subprocess
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Form
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 from passlib.hash import bcrypt
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 load_dotenv()
 
@@ -311,16 +279,20 @@ def require_admin(creds: HTTPBasicCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
-def run(cmd: list[str]):
+def run(cmd):
     try:
         p = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return p.stdout.strip()
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=400, detail=(e.stderr.strip() or "Command failed"))
 
+@APP.get("/api/health")
+def health():
+    return {"ok": True, "service": "enjaneb"}
+
 @APP.get("/", response_class=HTMLResponse)
 def home(_: bool = Depends(require_admin)):
-    return f"""
+    html = f'''
 <!doctype html>
 <html>
 <head>
@@ -336,21 +308,20 @@ def home(_: bool = Depends(require_admin)):
     <span class="badge text-bg-dark">HTTP:{HTTP_PORT} | SOCKS5:{SOCKS_PORT}</span>
   </div>
   <hr/>
-
   <div class="row g-3">
     <div class="col-md-6">
       <div class="card shadow-sm">
         <div class="card-body">
           <h5 class="card-title">HTTP Proxy (Squid)</h5>
-          <p class="text-muted mb-2">Manage users (Basic Auth). Service: squid</p>
+          <p class="text-muted mb-2">Users stored in htpasswd. Service: squid</p>
 
-          <form class="row g-2" method="post" action="/api/http/users/create">
+          <form class="row g-2" method="post" action="/ui/http/create">
             <div class="col-6"><input class="form-control" name="username" placeholder="username" required></div>
             <div class="col-6"><input class="form-control" name="password" placeholder="password" type="password" required></div>
             <div class="col-12"><button class="btn btn-primary w-100" type="submit">Create HTTP User</button></div>
           </form>
 
-          <form class="row g-2 mt-2" method="post" action="/api/http/users/delete">
+          <form class="row g-2 mt-2" method="post" action="/ui/http/delete">
             <div class="col-12"><input class="form-control" name="username" placeholder="username to delete" required></div>
             <div class="col-12"><button class="btn btn-outline-danger w-100" type="submit">Delete HTTP User</button></div>
           </form>
@@ -367,15 +338,15 @@ def home(_: bool = Depends(require_admin)):
       <div class="card shadow-sm">
         <div class="card-body">
           <h5 class="card-title">SOCKS5 (Dante)</h5>
-          <p class="text-muted mb-2">Manage system users. Service: danted</p>
+          <p class="text-muted mb-2">Users are system users in group: {SOCKS_GROUP}. Service: danted</p>
 
-          <form class="row g-2" method="post" action="/api/socks/users/create">
+          <form class="row g-2" method="post" action="/ui/socks/create">
             <div class="col-6"><input class="form-control" name="username" placeholder="username" required></div>
             <div class="col-6"><input class="form-control" name="password" placeholder="password" type="password" required></div>
             <div class="col-12"><button class="btn btn-primary w-100" type="submit">Create SOCKS User</button></div>
           </form>
 
-          <form class="row g-2 mt-2" method="post" action="/api/socks/users/delete">
+          <form class="row g-2 mt-2" method="post" action="/ui/socks/delete">
             <div class="col-12"><input class="form-control" name="username" placeholder="username to delete" required></div>
             <div class="col-12"><button class="btn btn-outline-danger w-100" type="submit">Delete SOCKS User</button></div>
           </form>
@@ -396,18 +367,14 @@ def home(_: bool = Depends(require_admin)):
         <a class="btn btn-outline-dark" href="/api/health">Health</a>
         <a class="btn btn-outline-dark" href="/api/service/status">Service Status</a>
       </div>
-      <p class="text-muted mt-2 mb-0">Tip: Use your panel admin username/password (HTTP Basic Auth) when the browser asks.</p>
+      <p class="text-muted mt-2 mb-0">Browser will ask for Basic Auth. Use your panel admin username/password.</p>
     </div>
   </div>
-
 </div>
 </body>
 </html>
-"""
-
-@APP.get("/api/health")
-def health():
-    return {"ok": True, "service": "enjaneb"}
+'''
+    return html
 
 @APP.get("/api/service/status")
 def service_status(_: bool = Depends(require_admin)):
@@ -422,10 +389,8 @@ def service_restart(name: str, _: bool = Depends(require_admin)):
     run(["systemctl", "restart", name])
     return {"ok": True, "service": name}
 
-# -------- HTTP (Squid) users ----------
 @APP.get("/api/http/users/list")
 def http_list(_: bool = Depends(require_admin)):
-    # usernames are before first ':'
     if not os.path.exists(SQUID_HTPASSWD):
         return {"users": []}
     with open(SQUID_HTPASSWD, "r", encoding="utf-8", errors="ignore") as f:
@@ -433,42 +398,35 @@ def http_list(_: bool = Depends(require_admin)):
     users = sorted([u for u in users if u])
     return {"users": users}
 
-@APP.post("/api/http/users/create")
-def http_create(username: str, password: str, _: bool = Depends(require_admin)):
-    # htpasswd -b -B file user pass
+@APP.post("/ui/http/create")
+def ui_http_create(username: str = Form(...), password: str = Form(...), _: bool = Depends(require_admin)):
     run(["htpasswd", "-bB", SQUID_HTPASSWD, username, password])
     run(["chown", "proxy:proxy", SQUID_HTPASSWD])
     run(["chmod", "640", SQUID_HTPASSWD])
     run(["systemctl", "restart", "squid"])
-    return {"ok": True}
+    return RedirectResponse(url="/", status_code=303)
 
-@APP.post("/api/http/users/delete")
-def http_delete(username: str, _: bool = Depends(require_admin)):
-    # htpasswd -D file user
+@APP.post("/ui/http/delete")
+def ui_http_delete(username: str = Form(...), _: bool = Depends(require_admin)):
     if not os.path.exists(SQUID_HTPASSWD):
         raise HTTPException(status_code=400, detail="htpasswd file missing")
     run(["htpasswd", "-D", SQUID_HTPASSWD, username])
     run(["systemctl", "restart", "squid"])
-    return {"ok": True}
+    return RedirectResponse(url="/", status_code=303)
 
-# -------- SOCKS (Dante) users ----------
 @APP.get("/api/socks/users/list")
 def socks_list(_: bool = Depends(require_admin)):
-    # list members of SOCKS_GROUP
     out = run(["getent", "group", SOCKS_GROUP])
     if ":" not in out:
         return {"users": []}
-    parts = out.split(":")
-    members = parts[-1].strip()
+    members = out.split(":")[-1].strip()
     if not members:
         return {"users": []}
     users = sorted([u for u in members.split(",") if u])
     return {"users": users}
 
-@APP.post("/api/socks/users/create")
-def socks_create(username: str, password: str, _: bool = Depends(require_admin)):
-    # create system user without shell + add to SOCKS_GROUP
-    # if exists, just set password and add to group
+@APP.post("/ui/socks/create")
+def ui_socks_create(username: str = Form(...), password: str = Form(...), _: bool = Depends(require_admin)):
     try:
         run(["id", "-u", username])
         user_exists = True
@@ -478,20 +436,16 @@ def socks_create(username: str, password: str, _: bool = Depends(require_admin))
     if not user_exists:
         run(["useradd", "-m", "-s", "/usr/sbin/nologin", username])
 
-    # set password
     run(["bash", "-lc", f"echo '{username}:{password}' | chpasswd"])
-    # add to group
     run(["usermod", "-aG", SOCKS_GROUP, username])
-
     run(["systemctl", "restart", "danted"])
-    return {"ok": True}
+    return RedirectResponse(url="/", status_code=303)
 
-@APP.post("/api/socks/users/delete")
-def socks_delete(username: str, _: bool = Depends(require_admin)):
-    # delete user and home
+@APP.post("/ui/socks/delete")
+def ui_socks_delete(username: str = Form(...), _: bool = Depends(require_admin)):
     run(["userdel", "-r", username])
     run(["systemctl", "restart", "danted"])
-    return {"ok": True}
+    return RedirectResponse(url="/", status_code=303)
 EOF
 
   cat > "${ENJ_HOME}/backend/.env" <<EOF
@@ -540,41 +494,6 @@ EOF
   systemctl restart enjaneb
 }
 
-update_nginx_reverse_proxy_to_backend() {
-  local domain="$1"
-  local backend_port="$2"
-
-  echo "Configuring Nginx reverse proxy to backend..."
-  cat > "/etc/nginx/sites-available/${domain}.conf" <<EOF
-server {
-  listen 80;
-  server_name ${domain};
-  return 301 https://\$host\$request_uri;
-}
-
-server {
-  listen 443 ssl http2;
-  server_name ${domain};
-
-  # SSL is managed by Certbot
-
-  location / {
-    proxy_pass http://127.0.0.1:${backend_port};
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-  }
-}
-EOF
-
-  ln -sf "/etc/nginx/sites-available/${domain}.conf" "/etc/nginx/sites-enabled/${domain}.conf"
-  rm -f /etc/nginx/sites-enabled/default || true
-
-  nginx -t
-  systemctl reload nginx
-}
-
 main() {
   banner
   need_root
@@ -587,11 +506,10 @@ main() {
   echo "Ubuntu $v detected ✅"
   echo
 
-  echo "This installer sets up: Panel + HTTP proxy + SOCKS5 (no VPN gateway routing)."
+  echo "This installer sets up: Panel + HTTP proxy + SOCKS5 (NO SSL)."
   echo
 
-  DOMAIN="$(read_default "Panel domain (A record must point to this server)" "panel.example.com")"
-  EMAIL="$(read_default "Let's Encrypt email" "admin@example.com")"
+  HOST="$(read_default "Panel host (domain or server IP; used in nginx server_name)" "localhost")"
 
   HTTP_PORT="$(read_default "HTTP proxy port (Squid)" "3128")"
   SOCKS_PORT="$(read_default "SOCKS5 port (Dante)" "1080")"
@@ -608,9 +526,6 @@ main() {
   setup_firewall "$SSH_PORT"
   setup_fail2ban
 
-  setup_nginx_site_http_only "$DOMAIN"
-  obtain_ssl_with_certbot "$DOMAIN" "$EMAIL"
-
   create_enjaneb_user
 
   setup_squid
@@ -618,15 +533,16 @@ main() {
 
   write_backend "$BACKEND_PORT" "$ADMIN_USER" "$ADMIN_PASS"
   install_systemd_service
-  update_nginx_reverse_proxy_to_backend "$DOMAIN" "$BACKEND_PORT"
+
+  setup_nginx_http_reverse_proxy "$HOST" "$BACKEND_PORT"
 
   echo
   echo "===================================="
   echo "DONE ✅"
-  echo "Panel:   https://${DOMAIN}/"
-  echo "HTTP:    ${HTTP_PORT} (Squid, user/pass from panel)"
-  echo "SOCKS5:  ${SOCKS_PORT} (Dante, user/pass from panel)"
-  echo "Service: systemctl status enjaneb"
+  echo "Panel (HTTP):  http://${HOST}/"
+  echo "HTTP Proxy:    ${HTTP_PORT} (Squid, create users in panel)"
+  echo "SOCKS5:        ${SOCKS_PORT} (Dante, create users in panel)"
+  echo "Service:       systemctl status enjaneb"
   echo "===================================="
 }
 
