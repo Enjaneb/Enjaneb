@@ -1,40 +1,38 @@
 #!/bin/bash
-# ENJANEB All-in-One Installer
+# ENJANEB All-in-One Installer - v1.1
 
-# تنظیمات اولیه (بند 26 و 27)
+# 1. دریافت نقش سرور
 clear
-echo "1) Iran Server (Full)"
-echo "2) Kharej Server (Tunnel Only)"
-read -p "Select Role: " ROLE
+echo "Welcome to ENJANEB Setup"
+echo "1) Iran Server"
+echo "2) Kharej Server"
+read -p "Choose: " ROLE
 
-# نصب پیشنیازها (بند 21 تا 23)
-apt update && apt install -y python3-pip git nginx ufw fail2ban curl
+# 2. نصب ابزارهای مورد نیاز
+apt update && apt install -y python3-pip git nginx ufw curl sqlite3
 
-# نصب GOST (هسته پروکسی)
-curl -L https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz | gunzip > /usr/local/bin/gost
-chmod +x /usr/local/bin/gost
-
-# دانلود پروژه از گیت‌هاب تو
+# 3. دانلود پروژه از گیت‌هاب تو
 rm -rf /opt/ENJANEB
 git clone https://github.com/enjaneb/ENJANEB.git /opt/ENJANEB
 
-if [ "$ROLE" == "1" ]; then
-    # تنظیمات سرور ایران (بند 24)
-    cd /opt/ENJANEB/backend
-    pip3 install fastapi uvicorn psutil
-    
-    # ساخت سرویس پایتون
-    echo "[Unit]
-Description=ENJANEB API
+# 4. آماده‌سازی دیتابیس (این همون بخش حساسه)
+cd /opt/ENJANEB/backend
+pip3 install fastapi uvicorn psutil
+python3 database.py  # اینجا دیتابیس ساخته میشه
+
+# 5. ساخت سرویس سیستم برای اجرای خودکار (بند 25)
+cat <<EOF > /etc/systemd/system/enjaneb.service
+[Unit]
+Description=ENJANEB Core Service
 [Service]
-ExecStart=/usr/bin/python3 /opt/ENJANEB/backend/main.py
+WorkingDirectory=/opt/ENJANEB/backend
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 [Install]
-WantedBy=multi-user.target" > /etc/systemd/system/enjaneb.service
-    
-    systemctl daemon-reload
-    systemctl enable --now enjaneb
-    echo "Iran Server is Ready!"
-else
-    echo "Kharej Server is Ready!"
-fi
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now enjaneb
+
+echo "Done! Panel is running on port 8000"
