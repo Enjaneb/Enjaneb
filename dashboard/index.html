@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<body style="background: #0f172a; color: white;">
+    <h1>داشبورد پروژه ENJANEB</h1>
+    <div id="stats">در حال دریافت اطلاعات...</div>
+    <script>
+        setInterval(async () => {
+            const res = await fetch('/api/metrics');
+            const data = await res.json();
+            document.getElementById('stats').innerText = `CPU: ${data.cpu}% | RAM: ${data.ram}%`;
+        }, 3000);
+    </script>
+</body>
+</html>
