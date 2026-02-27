@@ -33,3 +33,21 @@ def add_user(user: UserCreate):
         return {"message": "User added successfully"}
     except:
         raise HTTPException(status_code=400, detail="User already exists")
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles # این خط رو اضافه کن
+import psutil
+
+app = FastAPI()
+
+# --- این ۳ خط جدید رو اضافه کن ---
+# این کد میگه هر وقت کسی سایت رو باز کرد، فایل‌های پوشه dashboard رو نشون بده
+app.mount("/", StaticFiles(directory="/opt/ENJANEB/dashboard", html=True), name="dashboard")
+
+@app.get("/api/metrics")
+def get_metrics():
+    return {
+        "cpu": psutil.cpu_percent(interval=1),
+        "ram": psutil.virtual_memory().percent,
+        "status": "Online"
+    }
