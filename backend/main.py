@@ -17,27 +17,33 @@ class UserCreate(BaseModel):
 
 def start_proxy_engine():
     try:
-        # 1. استخراج یوزرها از دیتابیس
+        # 1. آماده‌سازی فایل یوزرها
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         users = cursor.execute("SELECT username, password FROM users").fetchall()
         conn.close()
         
-        # 2. ساخت فایل احراز هویت برای Gost
         auth_file = "/opt/ENJANEB/users.txt"
         with open(auth_file, "w") as f:
             for u in users:
                 f.write(f"{u[0]}:{u[1]}\n")
         
-        # 3. بستن Gost قبلی و اجرای نسخه ایمن (با فایل auth)
-        subprocess.run(["pkill", "-9", "gost"], stderr=subprocess.DEVNULL)
+        # 2. بستن تمام پروسه‌های قبلی Gost
+        os.system("pkill -9 gost")
         
-        # اجرای Gost که یوزر/پسورد رو چک می‌کنه
-        cmd = f"nohup /usr/local/bin/gost -L=http://:8080?auth={auth_file} -L=socks5://:8080?auth={auth_file} > /opt/ENJANEB/gost.log 2>&1 &"
-        subprocess.Popen(cmd, shell=True)
-        print("Secure Proxy Started.")
+        # 3. اجرای HTTP و SOCKS5 روی پورت 8080
+        cmd_proxy = f"nohup /usr/local/bin/gost -L=http://:8080?auth={auth_file} -L=socks5://:8080?auth={auth_file} > /opt/ENJANEB/proxy.log 2>&1 &"
+        os.system(cmd_proxy)
+        
+        # 4. اجرای MTProto روی پورت 443 (مخصوص تلگرام)
+        # یوزرنیم و پسورد MTProto را فعلاً ثابت می‌گذاریم یا می‌توانید طبق الگوی بالا تغییر دهید
+        secret = "ee00000000000000000000000000000000" # سکرت استاندارد
+        cmd_mtp = f"nohup /usr/local/bin/gost -L=mtls://:443?secret={secret} > /opt/ENJANEB/mtp.log 2>&1 &"
+        os.system(cmd_mtp)
+        
+        print("All Engines (HTTP, SOCKS5, MTProto) Started.")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error starting engines: {e}")
 
 @app.on_event("startup")
 async def startup_event():
@@ -60,8 +66,8 @@ def add_user(user: UserCreate):
     conn.cursor().execute("INSERT INTO users (username, password, traffic_limit_gb, expiry_date) VALUES (?, ?, ?, ?)",
                    (user.username, user.password, user.limit_gb, user.expiry))
     conn.commit(); conn.close()
-    start_proxy_engine() # آپدیت آنی پروکسی
-    return {"message": "User added"}
+    start_proxy_engine()
+    return {"message": "User added and proxies updated"}
 
 if os.path.exists("/opt/ENJANEB/dashboard"):
     app.mount("/", StaticFiles(directory="/opt/ENJANEB/dashboard", html=True), name="dashboard")
