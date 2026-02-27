@@ -1,1 +1,4 @@
-fastapi, uvicorn, psutil.
+fastapi
+uvicorn
+psutil
+aiofiles
