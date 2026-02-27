@@ -38,7 +38,6 @@ need_root() {
 detect_ssh_port() {
   local p=""
 
-  # Try ss first
   if command -v ss >/dev/null 2>&1; then
     p="$(ss -ltnp 2>/dev/null | awk '/sshd/ && $4 ~ /:[0-9]+$/ {print $4}' | head -n1 | sed 's/.*://')"
   fi
@@ -47,7 +46,6 @@ detect_ssh_port() {
     return 0
   fi
 
-  # Fallback to sshd_config
   if [[ -f /etc/ssh/sshd_config ]]; then
     p="$(grep -Ei '^\s*Port\s+' /etc/ssh/sshd_config 2>/dev/null | tail -n1 | awk '{print $2}' || true)"
   fi
@@ -56,16 +54,28 @@ detect_ssh_port() {
 
 choose_role() {
   echo
-  echo "Select server role:"
-  echo "  1) Iran (Proxy + Panel)"
-  echo "  2) Server Kharej (Gateway)"
+  echo "Choose server type (انتخاب نوع سرور):"
   echo
-  read -rp "Enter choice [1]: " choice || true
+  echo "  1) Iran Server  | سرور ایران"
+  echo "     - Installs ENJANEB Panel + security base"
+  echo "     - (Next phases: Proxy services management)"
+  echo
+  echo "  2) Kharej Server | سرور خارج"
+  echo "     - Prepares gateway/base components"
+  echo "     - (Next phases: site-to-site components)"
+  echo
+  echo "You can type: 1 / 2 / iran / kharej"
+  echo "Default (پیش‌فرض): 1"
+  echo
+
+  local choice=""
+  read -rp "Your choice (انتخاب شما) [1]: " choice || true
   choice="${choice:-1}"
+  choice="$(echo "$choice" | tr '[:upper:]' '[:lower:]' | xargs)"
 
   case "$choice" in
-    1) echo "iran" ;;
-    2) echo "kharej" ;;
+    1|iran) echo "iran" ;;
+    2|kharej|kharij|foreign) echo "kharej" ;;
     *) die "Invalid choice: $choice" ;;
   esac
 }
@@ -102,13 +112,13 @@ base_security_setup() {
 
 phase_iran_stub() {
   echo
-  echo "You selected: iran"
+  echo "Selected server type: IRAN (سرور ایران)"
   echo "Phase 3 done. Next phases will be added step by step."
 }
 
 phase_kharej_stub() {
   echo
-  echo "You selected: kharej"
+  echo "Selected server type: KHAREJ (سرور خارج)"
   echo "Phase 3 done. Next phases will be added step by step."
 }
 
@@ -132,11 +142,11 @@ main() {
 
   base_security_setup "$ssh_port"
 
-  case "$role" in
-    iran) phase_iran_stub ;;
-    kharej) phase_kharej_stub ;;
-    *) die "Unexpected role: $role" ;;
-  esac
+  if [[ "$role" == "iran" ]]; then
+    phase_iran_stub
+  else
+    phase_kharej_stub
+  fi
 
   echo
   echo "Phase 3 completed successfully ✅"
