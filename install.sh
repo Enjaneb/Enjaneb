@@ -52,32 +52,22 @@ detect_ssh_port() {
   echo "${p:-22}"
 }
 
-choose_role() {
-  echo
-  echo "Choose server type:"
-  echo
-  echo "  1) Iran Server"
-  echo "     - Installs ENJANEB base security"
-  echo "     - (Next phases: Panel + proxy services)"
-  echo
-  echo "  2) Kharej Server"
-  echo "     - Installs ENJANEB base security"
-  echo "     - (Next phases: site-to-site components)"
-  echo
-  echo "You can type: 1 / 2 / iran / kharej"
-  echo "Default: 1"
+choose_role_simple() {
+  echo "Select server role:"
+  echo "  1) Iran Server (Proxy + Panel)"
+  echo "  2) Kharej Server (Gateway)"
   echo
 
-  local choice=""
-  read -rp "Your choice [1]: " choice || true
+  read -rp "Enter choice [1]: " choice || true
   choice="${choice:-1}"
-  choice="$(echo "$choice" | tr '[:upper:]' '[:lower:]' | xargs)"
 
-  case "$choice" in
-    1|iran) echo "iran" ;;
-    2|kharej|kharij|foreign) echo "kharej" ;;
-    *) die "Invalid choice: $choice" ;;
-  esac
+  if [[ "$choice" == "1" ]]; then
+    echo "iran"
+  elif [[ "$choice" == "2" ]]; then
+    echo "kharej"
+  else
+    die "Invalid choice: $choice"
+  fi
 }
 
 base_security_setup() {
@@ -110,44 +100,25 @@ base_security_setup() {
   echo "Base security setup complete ✅"
 }
 
-phase_iran_stub() {
-  echo
-  echo "Selected server type: IRAN"
-  echo "Phase 3 done. Next phases will be added step by step."
-}
-
-phase_kharej_stub() {
-  echo
-  echo "Selected server type: KHAREJ"
-  echo "Phase 3 done. Next phases will be added step by step."
-}
-
 main() {
   banner
   need_root
 
   echo "Checking Ubuntu version..."
-  local v
   v="$(detect_ubuntu_version)"
   if ! check_ubuntu_supported "$v"; then
     die "Unsupported Ubuntu version: $v (supported: 22.04, 24.04)"
   fi
   echo "Ubuntu $v detected ✅"
+  echo
 
-  local role
-  role="$(choose_role)"
+  ROLE="$(choose_role_simple)"
 
-  local ssh_port
-  ssh_port="$(detect_ssh_port)"
+  SSH_PORT="$(detect_ssh_port)"
+  base_security_setup "$SSH_PORT"
 
-  base_security_setup "$ssh_port"
-
-  if [[ "$role" == "iran" ]]; then
-    phase_iran_stub
-  else
-    phase_kharej_stub
-  fi
-
+  echo
+  echo "You selected: $ROLE"
   echo
   echo "Phase 3 completed successfully ✅"
 }
