@@ -54,22 +54,22 @@ detect_ssh_port() {
 
 choose_role() {
   echo
-  echo "Choose server type (انتخاب نوع سرور):"
+  echo "Choose server type:"
   echo
-  echo "  1) Iran Server  | سرور ایران"
-  echo "     - Installs ENJANEB Panel + security base"
-  echo "     - (Next phases: Proxy services management)"
+  echo "  1) Iran Server"
+  echo "     - Installs ENJANEB base security"
+  echo "     - (Next phases: Panel + proxy services)"
   echo
-  echo "  2) Kharej Server | سرور خارج"
-  echo "     - Prepares gateway/base components"
+  echo "  2) Kharej Server"
+  echo "     - Installs ENJANEB base security"
   echo "     - (Next phases: site-to-site components)"
   echo
   echo "You can type: 1 / 2 / iran / kharej"
-  echo "Default (پیش‌فرض): 1"
+  echo "Default: 1"
   echo
 
   local choice=""
-  read -rp "Your choice (انتخاب شما) [1]: " choice || true
+  read -rp "Your choice [1]: " choice || true
   choice="${choice:-1}"
   choice="$(echo "$choice" | tr '[:upper:]' '[:lower:]' | xargs)"
 
@@ -112,13 +112,13 @@ base_security_setup() {
 
 phase_iran_stub() {
   echo
-  echo "Selected server type: IRAN (سرور ایران)"
+  echo "Selected server type: IRAN"
   echo "Phase 3 done. Next phases will be added step by step."
 }
 
 phase_kharej_stub() {
   echo
-  echo "Selected server type: KHAREJ (سرور خارج)"
+  echo "Selected server type: KHAREJ"
   echo "Phase 3 done. Next phases will be added step by step."
 }
 
