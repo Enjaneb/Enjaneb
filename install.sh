@@ -36,8 +36,9 @@ need_root() {
 }
 
 detect_ssh_port() {
-  # Try ss first
   local p=""
+
+  # Try ss first
   if command -v ss >/dev/null 2>&1; then
     p="$(ss -ltnp 2>/dev/null | awk '/sshd/ && $4 ~ /:[0-9]+$/ {print $4}' | head -n1 | sed 's/.*://')"
   fi
@@ -54,6 +55,7 @@ detect_ssh_port() {
 }
 
 choose_role() {
+  echo
   echo "Select server role:"
   echo "  1) Iran (Proxy + Panel)"
   echo "  2) Server Kharej (Gateway)"
@@ -88,8 +90,6 @@ base_security_setup() {
   ufw allow "${ssh_port}/tcp" || true
   ufw allow 80/tcp || true
   ufw allow 443/tcp || true
-
-  # Enable UFW (force = no prompt)
   ufw --force enable
 
   echo "Enabling Fail2ban..."
@@ -117,16 +117,19 @@ main() {
   need_root
 
   echo "Checking Ubuntu version..."
+  local v
   v="$(detect_ubuntu_version)"
   if ! check_ubuntu_supported "$v"; then
     die "Unsupported Ubuntu version: $v (supported: 22.04, 24.04)"
   fi
   echo "Ubuntu $v detected ✅"
 
-  echo
+  local role
   role="$(choose_role)"
 
+  local ssh_port
   ssh_port="$(detect_ssh_port)"
+
   base_security_setup "$ssh_port"
 
   case "$role" in
