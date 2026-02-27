@@ -1,9 +1,13 @@
 from fastapi import FastAPI, HTTPException
-import sqlite3
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List
+import psutil
+import sqlite3
+import os
 
 app = FastAPI()
+
+# مسیر دیتابیس
 DB_PATH = "/opt/ENJANEB/enjaneb.db"
 
 class UserCreate(BaseModel):
@@ -12,6 +16,17 @@ class UserCreate(BaseModel):
     limit_gb: float
     expiry: str
 
+# API برای دریافت وضعیت سیستم (بند 53، 54)
+@app.get("/api/metrics")
+def get_metrics():
+    return {
+        "cpu": psutil.cpu_percent(interval=1),
+        "ram": psutil.virtual_memory().percent,
+        "net": psutil.net_io_counters().bytes_sent + psutil.net_io_counters().bytes_recv,
+        "status": "Online"
+    }
+
+# API برای لیست کاربران (بند 56)
 @app.get("/api/users")
 def get_users():
     conn = sqlite3.connect(DB_PATH)
@@ -21,6 +36,7 @@ def get_users():
     conn.close()
     return [dict(u) for u in users]
 
+# API برای ساخت کاربر جدید (بند 57)
 @app.post("/api/users/add")
 def add_user(user: UserCreate):
     try:
@@ -31,23 +47,10 @@ def add_user(user: UserCreate):
         conn.commit()
         conn.close()
         return {"message": "User added successfully"}
-    except:
-        raise HTTPException(status_code=400, detail="User already exists")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Error: User might already exist")
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles # این خط رو اضافه کن
-import psutil
-
-app = FastAPI()
-
-# --- این ۳ خط جدید رو اضافه کن ---
-# این کد میگه هر وقت کسی سایت رو باز کرد، فایل‌های پوشه dashboard رو نشون بده
-app.mount("/", StaticFiles(directory="/opt/ENJANEB/dashboard", html=True), name="dashboard")
-
-@app.get("/api/metrics")
-def get_metrics():
-    return {
-        "cpu": psutil.cpu_percent(interval=1),
-        "ram": psutil.virtual_memory().percent,
-        "status": "Online"
-    }
+# اتصال به فایل‌های گرافیکی داشبورد (این بخش مشکل Not Found را حل می‌کند)
+# حتماً این بخش باید آخرین خطوط کد باشد
+if os.path.exists("/opt/ENJANEB/dashboard"):
+    app.mount("/", StaticFiles(directory="/opt/ENJANEB/dashboard", html=True), name="dashboard")
