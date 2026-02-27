@@ -17,7 +17,7 @@ class UserCreate(BaseModel):
 
 def start_proxy_engine():
     try:
-        # 1. آماده‌سازی فایل یوزرها
+        # 1. خواندن یوزرها
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         users = cursor.execute("SELECT username, password FROM users").fetchall()
@@ -28,27 +28,27 @@ def start_proxy_engine():
             for u in users:
                 f.write(f"{u[0]}:{u[1]}\n")
         
-        # 2. بستن تمام پروسه‌های قبلی Gost
+        # 2. ریست کردن پروسه‌ها
         os.system("pkill -9 gost")
         
-        # 3. اجرای HTTP و SOCKS5 روی پورت 8080
-        cmd_proxy = f"nohup /usr/local/bin/gost -L=http://:8080?auth={auth_file} -L=socks5://:8080?auth={auth_file} > /opt/ENJANEB/proxy.log 2>&1 &"
-        os.system(cmd_proxy)
+        # 3. اجرای HTTP روی 8080
+        os.system(f"nohup /usr/local/bin/gost -L=http://:8080?auth={auth_file} > /opt/ENJANEB/http.log 2>&1 &")
         
-        # 4. اجرای MTProto روی پورت 443 (مخصوص تلگرام)
-        # یوزرنیم و پسورد MTProto را فعلاً ثابت می‌گذاریم یا می‌توانید طبق الگوی بالا تغییر دهید
-        secret = "ee00000000000000000000000000000000" # سکرت استاندارد
-        cmd_mtp = f"nohup /usr/local/bin/gost -L=mtls://:443?secret={secret} > /opt/ENJANEB/mtp.log 2>&1 &"
-        os.system(cmd_mtp)
+        # 4. اجرای SOCKS5 روی 1080 (جداگانه برای پایداری بیشتر)
+        os.system(f"nohup /usr/local/bin/gost -L=socks5://:1080?auth={auth_file} > /opt/ENJANEB/socks.log 2>&1 &")
         
-        print("All Engines (HTTP, SOCKS5, MTProto) Started.")
+        # 5. اجرای MTProto روی 443
+        secret = "ee00000000000000000000000000000000"
+        os.system(f"nohup /usr/local/bin/gost -L=mtls://:443?secret={secret} > /opt/ENJANEB/mtp.log 2>&1 &")
+        
     except Exception as e:
-        print(f"Error starting engines: {e}")
+        print(f"Error: {e}")
 
 @app.on_event("startup")
 async def startup_event():
     start_proxy_engine()
 
+# بقیه توابع (metrics, users, add_user) ثابت بماند...
 @app.get("/api/metrics")
 def get_metrics():
     return {"cpu": psutil.cpu_percent(interval=1), "ram": psutil.virtual_memory().percent, "status": "Online"}
@@ -67,7 +67,7 @@ def add_user(user: UserCreate):
                    (user.username, user.password, user.limit_gb, user.expiry))
     conn.commit(); conn.close()
     start_proxy_engine()
-    return {"message": "User added and proxies updated"}
+    return {"message": "User added and all proxies updated"}
 
 if os.path.exists("/opt/ENJANEB/dashboard"):
     app.mount("/", StaticFiles(directory="/opt/ENJANEB/dashboard", html=True), name="dashboard")
